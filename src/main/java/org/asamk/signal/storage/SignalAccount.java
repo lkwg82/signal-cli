@@ -64,20 +64,14 @@ public class SignalAccount {
     }
 
     public static SignalAccount load(String dataPath, String username) throws IOException {
-        debug("load account config");
         SignalAccount account = new SignalAccount();
         IOUtils.createPrivateDirectories(dataPath);
-        String fileName = getFileName(dataPath, username);
-        account.openFileChannel(fileName);
+        account.openFileChannel(getFileName(dataPath, username));
         account.load();
         return account;
     }
 
-    public static SignalAccount create(String dataPath,
-                                       String username,
-                                       IdentityKeyPair identityKey,
-                                       int registrationId,
-                                       byte[] profileKey) throws IOException {
+    public static SignalAccount create(String dataPath, String username, IdentityKeyPair identityKey, int registrationId, byte[] profileKey) throws IOException {
         IOUtils.createPrivateDirectories(dataPath);
 
         SignalAccount account = new SignalAccount();
@@ -94,14 +88,7 @@ public class SignalAccount {
         return account;
     }
 
-    public static SignalAccount createLinkedAccount(String dataPath,
-                                                    String username,
-                                                    String password,
-                                                    int deviceId,
-                                                    IdentityKeyPair identityKey,
-                                                    int registrationId,
-                                                    String signalingKey,
-                                                    byte[] profileKey) throws IOException {
+    public static SignalAccount createLinkedAccount(String dataPath, String username, String password, int deviceId, IdentityKeyPair identityKey, int registrationId, String signalingKey, byte[] profileKey) throws IOException {
         IOUtils.createPrivateDirectories(dataPath);
 
         SignalAccount account = new SignalAccount();
@@ -150,12 +137,14 @@ public class SignalAccount {
         if (node != null) {
             deviceId = node.asInt();
         }
+        if (rootNode.has("isMultiDevice")) isMultiDevice = Util.getNotNullNode(rootNode, "isMultiDevice")
+                                                               .asBoolean();
         username = Util.getNotNullNode(rootNode, "username")
                        .asText();
         password = Util.getNotNullNode(rootNode, "password")
                        .asText();
         JsonNode pinNode = rootNode.get("registrationLockPin");
-        registrationLockPin = pinNode == null ? null : pinNode.asText();
+        registrationLockPin = pinNode == null || pinNode.isNull() ? null : pinNode.asText();
         if (rootNode.has("signalingKey")) {
             signalingKey = Util.getNotNullNode(rootNode, "signalingKey")
                                .asText();
@@ -213,11 +202,13 @@ public class SignalAccount {
         ObjectNode rootNode = jsonProcessor.createObjectNode();
         rootNode.put("username", username)
                 .put("deviceId", deviceId)
+                .put("isMultiDevice", isMultiDevice)
                 .put("password", password)
                 .put("registrationLockPin", registrationLockPin)
                 .put("signalingKey", signalingKey)
                 .put("preKeyIdOffset", preKeyIdOffset)
                 .put("nextSignedPreKeyId", nextSignedPreKeyId)
+                .put("profileKey", Base64.encodeBytes(profileKey))
                 .put("registered", registered)
                 .putPOJO("axolotlStore", signalProtocolStore)
                 .putPOJO("groupStore", groupStore)
@@ -260,7 +251,7 @@ public class SignalAccount {
         } finally {
             lock = null;
         }
-        
+
         try {
             fileChannel.close();
         } finally {
