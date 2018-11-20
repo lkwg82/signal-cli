@@ -24,6 +24,16 @@ dependencies {
     compile 'org.bouncycastle:bcprov-jdk15on:1.60'
     compile 'net.sourceforge.argparse4j:argparse4j:0.8.1'
     compile 'org.freedesktop.dbus:dbus-java:2.7.0'
+
+    testCompile 'junit:junit:4.12'
+    testCompile 'org.junit.vintage:junit-vintage-engine:5.1.0'
+    testCompile 'com.github.stefanbirkner:system-rules:1.17.2'
+
+    testCompile 'org.junit.jupiter:junit-jupiter-api:5.1.0'
+    testCompile 'org.junit.jupiter:junit-jupiter-engine:5.1.0'
+    testCompile 'org.junit.jupiter:junit-jupiter-engine:5.1.0'
+
+    testCompile 'org.assertj:assertj-core:3.11.1'
 }
 
 jar {
@@ -42,6 +52,10 @@ run {
         // $ gradle run -PappArgs="['-u', '+...', 'daemon', '--json']"
         args Eval.me(appArgs)
     }
+}
+
+test {
+    useJUnitPlatform()
 }
 
 // Find any 3rd party libraries which have released new versions
