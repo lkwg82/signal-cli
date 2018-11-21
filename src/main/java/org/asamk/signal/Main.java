@@ -22,14 +22,10 @@ import org.asamk.Signal;
 import org.asamk.signal.manager.Manager;
 import org.asamk.signal.storage.groups.GroupInfo;
 import org.asamk.signal.storage.protocol.JsonIdentityKeyStore;
-import org.asamk.signal.util.DateUtils;
-import org.asamk.signal.util.Hex;
-import org.asamk.signal.util.IOUtils;
-import org.asamk.signal.util.Util;
+import org.asamk.signal.util.*;
 import org.freedesktop.dbus.DBusConnection;
 import org.freedesktop.dbus.DBusSigHandler;
 import org.freedesktop.dbus.exceptions.DBusException;
-import org.freedesktop.dbus.exceptions.DBusExecutionException;
 import org.whispersystems.libsignal.InvalidKeyException;
 import org.whispersystems.libsignal.util.guava.Optional;
 import org.whispersystems.signalservice.api.messages.multidevice.DeviceInfo;
@@ -41,7 +37,6 @@ import java.io.File;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.nio.charset.Charset;
 import java.security.Security;
 import java.util.ArrayList;
 import java.util.List;
@@ -51,6 +46,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 import static org.asamk.signal.util.ErrorUtils.*;
+import static org.asamk.signal.util.LogUtils.debug;
 
 public class Main {
 
@@ -71,7 +67,12 @@ public class Main {
     }
 
     private static int handleCommands(Namespace ns) {
-        final String username = ns.getString("username");
+
+        activateDebugging(ns);
+
+        debug("--- DEBUGGING enabled ---");
+
+        String username = ns.getString("username");
         Manager m;
         Signal ts;
         DBusConnection dBusConn = null;
@@ -322,80 +323,7 @@ public class Main {
                         System.err.println("User is not registered.");
                         return 1;
                     }
-
-                    if (ns.getBoolean("endsession")) {
-                        if (ns.getList("recipient") == null) {
-                            System.err.println("No recipients given");
-                            System.err.println("Aborting sending.");
-                            return 1;
-                        }
-                        try {
-                            ts.sendEndSessionMessage(ns.<String>getList("recipient"));
-                        } catch (IOException e) {
-                            handleIOException(e);
-                            return 3;
-                        } catch (EncapsulatedExceptions e) {
-                            handleEncapsulatedExceptions(e);
-                            return 3;
-                        } catch (AssertionError e) {
-                            handleAssertionError(e);
-                            return 1;
-                        } catch (DBusExecutionException e) {
-                            handleDBusExecutionException(e);
-                            return 1;
-                        }
-                    } else {
-                        String messageText = ns.getString("message");
-                        if (messageText == null) {
-                            try {
-                                messageText = IOUtils.readAll(System.in, Charset.defaultCharset());
-                            } catch (IOException e) {
-                                System.err.println("Failed to read message from stdin: " + e.getMessage());
-                                System.err.println("Aborting sending.");
-                                return 1;
-                            }
-                        }
-
-                        try {
-                            List<String> attachments = ns.getList("attachment");
-                            if (attachments == null) {
-                                attachments = new ArrayList<>();
-                            }
-                            if (ns.getString("group") != null) {
-                                byte[] groupId = Util.decodeGroupId(ns.getString("group"));
-                                ts.sendGroupMessage(messageText, attachments, groupId);
-                            } else {
-                                ts.sendMessage(messageText, attachments, ns.<String>getList("recipient"));
-                            }
-                        } catch (IOException e) {
-                            handleIOException(e);
-                            return 3;
-                        } catch (EncapsulatedExceptions e) {
-                            handleEncapsulatedExceptions(e);
-                            return 3;
-                        } catch (AssertionError e) {
-                            handleAssertionError(e);
-                            return 1;
-                        } catch (GroupNotFoundException e) {
-                            handleGroupNotFoundException(e);
-                            return 1;
-                        } catch (NotAGroupMemberException e) {
-                            handleNotAGroupMemberException(e);
-                            return 1;
-                        } catch (AttachmentInvalidException e) {
-                            System.err.println("Failed to add attachment: " + e.getMessage());
-                            System.err.println("Aborting sending.");
-                            return 1;
-                        } catch (DBusExecutionException e) {
-                            handleDBusExecutionException(e);
-                            return 1;
-                        } catch (GroupIdFormatException e) {
-                            handleGroupIdFormatException(e);
-                            return 1;
-                        }
-                    }
-
-                    break;
+                    return new SendCommand(ns, ts).execute();
                 case "receive":
                     if (dBusConn != null) {
                         try {
@@ -454,7 +382,7 @@ public class Main {
                     }
                     boolean ignoreAttachments = ns.getBoolean("ignore_attachments");
                     try {
-                        final Manager.ReceiveMessageHandler handler = ns.getBoolean("json") ? new JsonReceiveMessageHandler(m) : new ReceiveMessageHandler(m);
+                        Manager.ReceiveMessageHandler handler = ns.getBoolean("json") ? new JsonReceiveMessageHandler(m) : new ReceiveMessageHandler(m);
                         m.receiveMessages((long) (timeout * 1000), TimeUnit.MILLISECONDS, returnOnTimeout, ignoreAttachments, handler);
                     } catch (IOException e) {
                         System.err.println("Error while receiving messages: " + e.getMessage());
@@ -688,6 +616,12 @@ public class Main {
             if (dBusConn != null) {
                 dBusConn.disconnect();
             }
+        }
+    }
+
+    private static void activateDebugging(Namespace ns) {
+        if (ns.getBoolean("debug")) {
+            LogUtils.DEBUG_ENABLED = true;
         }
     }
 

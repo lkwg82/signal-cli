@@ -1,9 +1,6 @@
 package org.asamk.signal.util;
 
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.*;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
@@ -31,31 +28,63 @@ class LogUtilsTest {
         System.setErr(old);
     }
 
-    @DisplayName("should log when enabled")
-    @Test
-    void test1() {
-        LogUtils.DEBUG_ENABLED = true;
+    @Nested
+    class ActivationTests {
 
-        LogUtils.debug("test");
+        @DisplayName("should log when enabled")
+        @Test
+        void test1() {
+            LogUtils.DEBUG_ENABLED = true;
 
-        assertThat(baos.toString()).isEqualTo("DEBUG test\n");
+            LogUtils.debug("test");
+
+            expectedLog("test");
+        }
+
+        @DisplayName("should not log when disabled")
+        @Test
+        void test2() {
+            LogUtils.DEBUG_ENABLED = false;
+
+            LogUtils.debug("test");
+
+            assertThat(baos.toString()).isEmpty();
+        }
+
+        @DisplayName("should not log by default")
+        @Test
+        void test3() {
+            LogUtils.debug("test");
+
+            assertThat(baos.toString()).isEmpty();
+        }
     }
 
-    @DisplayName("should not log when disabled")
-    @Test
-    void test2() {
-        LogUtils.DEBUG_ENABLED = false;
+    @Nested
+    class ArgumentTests {
 
-        LogUtils.debug("test");
+        @DisplayName("should emit error on empty args")
+        @Test
+        void test4() {
+            LogUtils.DEBUG_ENABLED = true;
 
-        assertThat(baos.toString()).isEmpty();
+            LogUtils.debug();
+
+            expectedLog("empty args - not nice");
+        }
+
+        @DisplayName("should emit error on null args")
+        @Test
+        void test5() {
+            LogUtils.DEBUG_ENABLED = true;
+
+            LogUtils.debug(null);
+
+            expectedLog("null args - plz fix");
+        }
     }
 
-    @DisplayName("should not log by default")
-    @Test
-    void test3() {
-        LogUtils.debug("test");
-
-        assertThat(baos.toString()).isEmpty();
+    private void expectedLog(String expected) {
+        assertThat(baos.toString()).isEqualTo("DEBUG " + expected + "\n");
     }
 }

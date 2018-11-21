@@ -67,6 +67,8 @@ import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+import static org.asamk.signal.util.LogUtils.debug;
+
 public class Manager implements Signal {
 
     private final String settingsPath;
@@ -538,6 +540,7 @@ public class Manager implements Signal {
     public void sendMessage(String messageText, List<String> attachments,
                             List<String> recipients)
             throws IOException, EncapsulatedExceptions, AttachmentInvalidException {
+        debug(" receipients: %s", String.join(",", recipients));
         final SignalServiceDataMessage.Builder messageBuilder = SignalServiceDataMessage.newBuilder().withBody(messageText);
         if (attachments != null) {
             messageBuilder.withAttachments(Utils.getSignalServiceAttachments(attachments));
@@ -1256,8 +1259,9 @@ public class Manager implements Signal {
         return outputFile;
     }
 
-    private InputStream retrieveAttachmentAsStream(SignalServiceAttachmentPointer pointer, File tmpFile) throws IOException, InvalidMessageException {
-        final SignalServiceMessageReceiver messageReceiver = new SignalServiceMessageReceiver(BaseConfig.serviceConfiguration, username, account.getPassword(), account.getDeviceId(), account.getSignalingKey(), BaseConfig.USER_AGENT, null, timer);
+    private InputStream retrieveAttachmentAsStream(SignalServiceAttachmentPointer pointer,
+                                                   File tmpFile) throws IOException, InvalidMessageException {
+        SignalServiceMessageReceiver messageReceiver = new SignalServiceMessageReceiver(BaseConfig.serviceConfiguration, username, account.getPassword(), account.getDeviceId(), account.getSignalingKey(), BaseConfig.USER_AGENT, null, timer);
         return messageReceiver.retrieveAttachment(pointer, tmpFile, BaseConfig.MAX_ATTACHMENT_SIZE);
     }
 
