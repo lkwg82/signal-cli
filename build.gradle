@@ -25,6 +25,8 @@ dependencies {
     compile 'net.sourceforge.argparse4j:argparse4j:0.8.1'
     compile 'org.freedesktop.dbus:dbus-java:2.7.0'
 
+    compile 'commons-io:commons-io:2.6'
+
     testCompile 'junit:junit:4.12'
     testCompile 'org.junit.vintage:junit-vintage-engine:5.1.0'
     testCompile 'com.github.stefanbirkner:system-rules:1.17.2'

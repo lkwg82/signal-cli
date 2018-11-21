@@ -31,6 +31,8 @@ import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
 import java.util.Collection;
 
+import static org.asamk.signal.util.LogUtils.debug;
+
 public class SignalAccount {
 
     private final ObjectMapper jsonProcessor = new ObjectMapper();
@@ -63,6 +65,7 @@ public class SignalAccount {
     }
 
     public static SignalAccount load(String dataPath, String username) throws IOException {
+        debug("load account config");
         SignalAccount account = new SignalAccount();
         IOUtils.createPrivateDirectories(dataPath);
         account.openFileChannel(getFileName(dataPath, username));
@@ -70,7 +73,11 @@ public class SignalAccount {
         return account;
     }
 
-    public static SignalAccount create(String dataPath, String username, IdentityKeyPair identityKey, int registrationId, byte[] profileKey) throws IOException {
+    public static SignalAccount create(String dataPath,
+                                       String username,
+                                       IdentityKeyPair identityKey,
+                                       int registrationId,
+                                       byte[] profileKey) throws IOException {
         IOUtils.createPrivateDirectories(dataPath);
 
         SignalAccount account = new SignalAccount();
@@ -87,7 +94,14 @@ public class SignalAccount {
         return account;
     }
 
-    public static SignalAccount createLinkedAccount(String dataPath, String username, String password, int deviceId, IdentityKeyPair identityKey, int registrationId, String signalingKey, byte[] profileKey) throws IOException {
+    public static SignalAccount createLinkedAccount(String dataPath,
+                                                    String username,
+                                                    String password,
+                                                    int deviceId,
+                                                    IdentityKeyPair identityKey,
+                                                    int registrationId,
+                                                    String signalingKey,
+                                                    byte[] profileKey) throws IOException {
         IOUtils.createPrivateDirectories(dataPath);
 
         SignalAccount account = new SignalAccount();
@@ -191,6 +205,7 @@ public class SignalAccount {
     }
 
     public void save() {
+        debug("save config");
         if (fileChannel == null) {
             return;
         }
