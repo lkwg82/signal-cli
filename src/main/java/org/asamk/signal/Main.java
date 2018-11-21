@@ -22,11 +22,15 @@ import org.asamk.Signal;
 import org.asamk.signal.manager.Manager;
 import org.asamk.signal.storage.groups.GroupInfo;
 import org.asamk.signal.storage.protocol.JsonIdentityKeyStore;
-import org.asamk.signal.util.*;
+import org.asamk.signal.util.DateUtils;
+import org.asamk.signal.util.Hex;
+import org.asamk.signal.util.LogUtils;
+import org.asamk.signal.util.Util;
 import org.freedesktop.dbus.DBusConnection;
 import org.freedesktop.dbus.DBusSigHandler;
 import org.freedesktop.dbus.exceptions.DBusException;
 import org.whispersystems.libsignal.InvalidKeyException;
+import org.whispersystems.libsignal.util.Pair;
 import org.whispersystems.libsignal.util.guava.Optional;
 import org.whispersystems.signalservice.api.messages.multidevice.DeviceInfo;
 import org.whispersystems.signalservice.api.push.exceptions.EncapsulatedExceptions;
@@ -54,16 +58,25 @@ public class Main {
     private static final String SIGNAL_OBJECTPATH = "/org/asamk/Signal";
 
     public static void main(String[] args) {
-        // Workaround for BKS truststore
-        Security.insertProviderAt(new org.bouncycastle.jce.provider.BouncyCastleProvider(), 1);
+        installSecurityProviderWorkaround();
 
         Namespace ns = new CommandLineParser().parse(args);
         if (ns == null) {
             System.exit(1);
         }
 
-        int res = handleCommands(ns);
-        System.exit(res);
+        try {
+            int res = handleCommands(ns);
+            System.exit(res);
+        } catch (ExitCodeException e) {
+            System.err.println("ERROR " + e.getMessage());
+            System.exit(e.getExitCode());
+        }
+    }
+
+    public static void installSecurityProviderWorkaround() {
+        // Workaround for BKS truststore
+        Security.insertProviderAt(new org.bouncycastle.jce.provider.BouncyCastleProvider(), 1);
     }
 
     private static int handleCommands(Namespace ns) {
@@ -101,25 +114,9 @@ public class Main {
                     return 3;
                 }
             } else {
-                String settingsPath = ns.getString("config");
-                if (TextUtils.isEmpty(settingsPath)) {
-                    settingsPath = System.getProperty("user.home") + "/.config/signal";
-                    if (!new File(settingsPath).exists()) {
-                        String legacySettingsPath = System.getProperty("user.home") + "/.config/textsecure";
-                        if (new File(legacySettingsPath).exists()) {
-                            settingsPath = legacySettingsPath;
-                        }
-                    }
-                }
-
-                m = new Manager(username, settingsPath);
-                ts = m;
-                try {
-                    m.init();
-                } catch (Exception e) {
-                    System.err.println("Error loading state file: " + e.getMessage());
-                    return 2;
-                }
+                Pair<Manager, Signal> m_ts = initializeStandaloneManager(ns, username);
+                m = m_ts.first();
+                ts = m_ts.second();
             }
 
             switch (ns.getString("command")) {
@@ -325,47 +322,9 @@ public class Main {
                     }
                     return new SendCommand(ns, ts).execute();
                 case "receive":
+                    debug("receiving");
                     if (dBusConn != null) {
-                        try {
-                            dBusConn.addSigHandler(Signal.MessageReceived.class, new DBusSigHandler<Signal.MessageReceived>() {
-                                @Override
-                                public void handle(Signal.MessageReceived s) {
-                                    System.out.print(String.format("Envelope from: %s\nTimestamp: %s\nBody: %s\n",
-                                            s.getSender(), DateUtils.formatTimestamp(s.getTimestamp()), s.getMessage()));
-                                    if (s.getGroupId().length > 0) {
-                                        System.out.println("Group info:");
-                                        System.out.println("  Id: " + Base64.encodeBytes(s.getGroupId()));
-                                    }
-                                    if (s.getAttachments().size() > 0) {
-                                        System.out.println("Attachments: ");
-                                        for (String attachment : s.getAttachments()) {
-                                            System.out.println("-  Stored plaintext in: " + attachment);
-                                        }
-                                    }
-                                    System.out.println();
-                                }
-                            });
-                            dBusConn.addSigHandler(Signal.ReceiptReceived.class, new DBusSigHandler<Signal.ReceiptReceived>() {
-                                @Override
-                                public void handle(Signal.ReceiptReceived s) {
-                                    System.out.print(String.format("Receipt from: %s\nTimestamp: %s\n",
-                                            s.getSender(), DateUtils.formatTimestamp(s.getTimestamp())));
-                                }
-                            });
-                        } catch (UnsatisfiedLinkError e) {
-                            System.err.println("Missing native library dependency for dbus service: " + e.getMessage());
-                            return 1;
-                        } catch (DBusException e) {
-                            e.printStackTrace();
-                            return 1;
-                        }
-                        while (true) {
-                            try {
-                                Thread.sleep(10000);
-                            } catch (InterruptedException e) {
-                                return 0;
-                            }
-                        }
+                        return receiveLoopWithDBus(dBusConn);
                     }
                     if (!m.isRegistered()) {
                         System.err.println("User is not registered.");
@@ -619,13 +578,88 @@ public class Main {
         }
     }
 
+    private static Pair<Manager, Signal> initializeStandaloneManager(Namespace ns, String username) {
+        String configuredSettingsPath = ns.getString("config");
+        String settingsPath = retrieveLocalSettingsPath(configuredSettingsPath);
+        Manager m = new Manager(username, settingsPath);
+
+        try {
+            m.init();
+        } catch (Exception e) {
+            throw new ExitCodeException(2, "Error loading state file: " + e.getMessage(), e);
+        }
+        return new Pair<>(m, m);
+    }
+
+    private static String retrieveLocalSettingsPath(String settingsPath) {
+        if (TextUtils.isEmpty(settingsPath)) {
+            settingsPath = System.getProperty("user.home") + "/.config/signal";
+            if (!new File(settingsPath).exists()) {
+                String legacySettingsPath = System.getProperty("user.home") + "/.config/textsecure";
+                if (new File(legacySettingsPath).exists()) {
+                    settingsPath = legacySettingsPath;
+                }
+            }
+        }
+        return settingsPath;
+    }
+
+    public static String retrieveLocalSettingsPath() {
+        return retrieveLocalSettingsPath("");
+    }
+
+    private static int receiveLoopWithDBus(final DBusConnection dBusConn) {
+        try {
+            dBusConn.addSigHandler(Signal.MessageReceived.class, new DBusSigHandler<Signal.MessageReceived>() {
+                @Override
+                public void handle(Signal.MessageReceived s) {
+                    System.out.print(String.format("Envelope from: %s\nTimestamp: %s\nBody: %s\n",
+                            s.getSender(), DateUtils.formatTimestamp(s.getTimestamp()), s.getMessage()));
+                    if (s.getGroupId().length > 0) {
+                        System.out.println("Group info:");
+                        System.out.println("  Id: " + Base64.encodeBytes(s.getGroupId()));
+                    }
+                    if (s.getAttachments().size() > 0) {
+                        System.out.println("Attachments: ");
+                        for (String attachment : s.getAttachments()) {
+                            System.out.println("-  Stored plaintext in: " + attachment);
+                        }
+                    }
+                    System.out.println();
+                }
+            });
+            dBusConn.addSigHandler(Signal.ReceiptReceived.class, new DBusSigHandler<Signal.ReceiptReceived>() {
+                @Override
+                public void handle(Signal.ReceiptReceived s) {
+                    System.out.print(String.format("Receipt from: %s\nTimestamp: %s\n",
+                            s.getSender(), DateUtils.formatTimestamp(s.getTimestamp())));
+                }
+            });
+        } catch (UnsatisfiedLinkError e) {
+            System.err.println("Missing native library dependency for dbus service: " + e.getMessage());
+            return 1;
+        } catch (DBusException e) {
+            e.printStackTrace();
+            return 1;
+        }
+        while (true) {
+            try {
+                Thread.sleep(10000);
+            } catch (InterruptedException e) {
+                return 0;
+            }
+        }
+    }
+
     private static void activateDebugging(Namespace ns) {
         if (ns.getBoolean("debug")) {
             LogUtils.DEBUG_ENABLED = true;
         }
     }
 
-    private static void printIdentityFingerprint(Manager m, String theirUsername, JsonIdentityKeyStore.Identity theirId) {
+    private static void printIdentityFingerprint(Manager m,
+                                                 String theirUsername,
+                                                 JsonIdentityKeyStore.Identity theirId) {
         String digits = Util.formatSafetyNumber(m.computeSafetyNumber(theirUsername, theirId.getIdentityKey()));
         System.out.println(String.format("%s: %s Added: %s Fingerprint: %s Safety Number: %s", theirUsername,
                 theirId.getTrustLevel(), theirId.getDateAdded(), Hex.toStringCondensed(theirId.getFingerprint()), digits));

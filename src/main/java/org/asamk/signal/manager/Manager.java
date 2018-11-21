@@ -25,6 +25,7 @@ import org.asamk.signal.storage.groups.JsonGroupStore;
 import org.asamk.signal.storage.protocol.JsonIdentityKeyStore;
 import org.asamk.signal.storage.threads.ThreadInfo;
 import org.asamk.signal.util.IOUtils;
+import org.asamk.signal.util.LogUtils;
 import org.asamk.signal.util.Util;
 import org.signal.libsignal.metadata.*;
 import org.whispersystems.libsignal.*;
@@ -125,6 +126,7 @@ public class Manager implements Signal {
     }
 
     public void init() throws IOException {
+        LogUtils.debug("initialize manager");
         if (!SignalAccount.userExists(dataPath, username)) {
             return;
         }
@@ -134,8 +136,10 @@ public class Manager implements Signal {
 
         accountManager = new SignalServiceAccountManager(BaseConfig.serviceConfiguration, username, account.getPassword(), account.getDeviceId(), BaseConfig.USER_AGENT, timer);
         try {
+            debug("get pre keys count");
             if (account.isRegistered() && accountManager.getPreKeysCount() < BaseConfig.PREKEY_MINIMUM_COUNT) {
                 refreshPreKeys();
+                debug("refresh pre keys");
                 account.save();
             }
         } catch (AuthorizationFailedException e) {
@@ -331,6 +335,7 @@ public class Manager implements Signal {
     }
 
     private void refreshPreKeys() throws IOException {
+        debug("refresh pre keys");
         List<PreKeyRecord> oneTimePreKeys = generatePreKeys();
         final IdentityKeyPair identityKeyPair = account.getSignalProtocolStore().getIdentityKeyPair();
         SignedPreKeyRecord signedPreKeyRecord = generateSignedPreKey(identityKeyPair);
@@ -415,7 +420,10 @@ public class Manager implements Signal {
         sendMessageLegacy(messageBuilder, g.members);
     }
 
-    private byte[] sendUpdateGroupMessage(byte[] groupId, String name, Collection<String> members, String avatarFile) throws IOException, EncapsulatedExceptions, GroupNotFoundException, AttachmentInvalidException {
+    private byte[] sendUpdateGroupMessage(byte[] groupId,
+                                          String name,
+                                          Collection<String> members,
+                                          String avatarFile) throws IOException, EncapsulatedExceptions, GroupNotFoundException, AttachmentInvalidException {
         GroupInfo g;
         if (groupId == null) {
             // Create new group
@@ -540,6 +548,8 @@ public class Manager implements Signal {
     public void sendMessage(String messageText, List<String> attachments,
                             List<String> recipients)
             throws IOException, EncapsulatedExceptions, AttachmentInvalidException {
+        debug("send message");
+        debug(" text: %s", messageText);
         debug(" receipients: %s", String.join(",", recipients));
         final SignalServiceDataMessage.Builder messageBuilder = SignalServiceDataMessage.newBuilder().withBody(messageText);
         if (attachments != null) {
@@ -612,7 +622,10 @@ public class Manager implements Signal {
     }
 
     @Override
-    public byte[] updateGroup(byte[] groupId, String name, List<String> members, String avatar) throws IOException, EncapsulatedExceptions, GroupNotFoundException, AttachmentInvalidException {
+    public byte[] updateGroup(byte[] groupId,
+                              String name,
+                              List<String> members,
+                              String avatar) throws IOException, EncapsulatedExceptions, GroupNotFoundException, AttachmentInvalidException {
         if (groupId.length == 0) {
             groupId = null;
         }
@@ -744,7 +757,8 @@ public class Manager implements Signal {
         }
     }
 
-    private List<SendMessageResult> sendMessage(SignalServiceDataMessage.Builder messageBuilder, Collection<String> recipients)
+    private List<SendMessageResult> sendMessage(SignalServiceDataMessage.Builder messageBuilder,
+                                                Collection<String> recipients)
             throws IOException {
         Set<SignalServiceAddress> recipientsTS = Utils.getSignalServiceAddresses(recipients, username);
         if (recipientsTS == null) {
@@ -817,7 +831,11 @@ public class Manager implements Signal {
         account.getSignalProtocolStore().deleteAllSessions(source);
     }
 
-    private void handleSignalServiceDataMessage(SignalServiceDataMessage message, boolean isSync, String source, String destination, boolean ignoreAttachments) {
+    private void handleSignalServiceDataMessage(SignalServiceDataMessage message,
+                                                boolean isSync,
+                                                String source,
+                                                String destination,
+                                                boolean ignoreAttachments) {
         String threadId;
         if (message.getGroupInfo().isPresent()) {
             SignalServiceGroup groupInfo = message.getGroupInfo().get();
@@ -974,7 +992,11 @@ public class Manager implements Signal {
         }
     }
 
-    public void receiveMessages(long timeout, TimeUnit unit, boolean returnOnTimeout, boolean ignoreAttachments, ReceiveMessageHandler handler) throws IOException {
+    public void receiveMessages(long timeout,
+                                TimeUnit unit,
+                                boolean returnOnTimeout,
+                                boolean ignoreAttachments,
+                                ReceiveMessageHandler handler) throws IOException {
         retryFailedReceivedMessages(handler, ignoreAttachments);
         final SignalServiceMessageReceiver messageReceiver = new SignalServiceMessageReceiver(BaseConfig.serviceConfiguration, username, account.getPassword(), account.getDeviceId(), account.getSignalingKey(), BaseConfig.USER_AGENT, null, timer);
 
@@ -1039,7 +1061,9 @@ public class Manager implements Signal {
         }
     }
 
-    private void handleMessage(SignalServiceEnvelope envelope, SignalServiceContent content, boolean ignoreAttachments) {
+    private void handleMessage(SignalServiceEnvelope envelope,
+                               SignalServiceContent content,
+                               boolean ignoreAttachments) {
         if (content != null) {
             if (content.getDataMessage().isPresent()) {
                 SignalServiceDataMessage message = content.getDataMessage().get();
@@ -1187,7 +1211,8 @@ public class Manager implements Signal {
         return new File(avatarsPath, "contact-" + number);
     }
 
-    private File retrieveContactAvatarAttachment(SignalServiceAttachment attachment, String number) throws IOException, InvalidMessageException {
+    private File retrieveContactAvatarAttachment(SignalServiceAttachment attachment,
+                                                 String number) throws IOException, InvalidMessageException {
         IOUtils.createPrivateDirectories(avatarsPath);
         if (attachment.isPointer()) {
             SignalServiceAttachmentPointer pointer = attachment.asPointer();
@@ -1202,7 +1227,8 @@ public class Manager implements Signal {
         return new File(avatarsPath, "group-" + Base64.encodeBytes(groupId).replace("/", "_"));
     }
 
-    private File retrieveGroupAvatarAttachment(SignalServiceAttachment attachment, byte[] groupId) throws IOException, InvalidMessageException {
+    private File retrieveGroupAvatarAttachment(SignalServiceAttachment attachment,
+                                               byte[] groupId) throws IOException, InvalidMessageException {
         IOUtils.createPrivateDirectories(avatarsPath);
         if (attachment.isPointer()) {
             SignalServiceAttachmentPointer pointer = attachment.asPointer();
@@ -1222,7 +1248,9 @@ public class Manager implements Signal {
         return retrieveAttachment(pointer, getAttachmentFile(pointer.getId()), true);
     }
 
-    private File retrieveAttachment(SignalServiceAttachmentPointer pointer, File outputFile, boolean storePreview) throws IOException, InvalidMessageException {
+    private File retrieveAttachment(SignalServiceAttachmentPointer pointer,
+                                    File outputFile,
+                                    boolean storePreview) throws IOException, InvalidMessageException {
         if (storePreview && pointer.getPreview().isPresent()) {
             File previewFile = new File(outputFile + ".preview");
             try (OutputStream output = new FileOutputStream(previewFile)) {
@@ -1364,7 +1392,9 @@ public class Manager implements Signal {
         }
     }
 
-    private void sendVerifiedMessage(String destination, IdentityKey identityKey, TrustLevel trustLevel) throws IOException, UntrustedIdentityException {
+    private void sendVerifiedMessage(String destination,
+                                     IdentityKey identityKey,
+                                     TrustLevel trustLevel) throws IOException, UntrustedIdentityException {
         VerifiedMessage verifiedMessage = new VerifiedMessage(destination, identityKey, trustLevel.toVerifiedState(), System.currentTimeMillis());
         sendSyncMessage(SignalServiceSyncMessage.forVerified(verifiedMessage));
     }

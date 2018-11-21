@@ -31,16 +31,7 @@ class SendCommand {
         if (namespace.getBoolean("endsession")) {
             return endSession();
         } else {
-            String messageText = namespace.getString("message");
-            if (messageText == null) {
-                try {
-                    messageText = IOUtils.readAll(System.in, Charset.defaultCharset());
-                } catch (IOException e) {
-                    System.err.println("Failed to read message from stdin: " + e.getMessage());
-                    System.err.println("Aborting sending.");
-                    return 1;
-                }
-            }
+            String messageText = retrieveMessageText();
             debug(" message with text '%s'", messageText);
 
             try {
@@ -52,7 +43,8 @@ class SendCommand {
                     byte[] groupId = Util.decodeGroupId(namespace.getString("group"));
                     signal.sendGroupMessage(messageText, attachments, groupId);
                 } else {
-                    signal.sendMessage(messageText, attachments, namespace.<String>getList("recipient"));
+                    List<String> recipient = namespace.getList("recipient");
+                    signal.sendMessage(messageText, attachments, recipient);
                 }
             } catch (IOException e) {
                 handleIOException(e);
@@ -82,6 +74,19 @@ class SendCommand {
             }
         }
         return 0;
+    }
+
+    private String retrieveMessageText() {
+        String messageText = namespace.getString("message");
+        if (messageText == null) {
+            try {
+                messageText = IOUtils.readAll(System.in, Charset.defaultCharset());
+            } catch (IOException e) {
+                String err = "Failed to read message from stdin: " + e.getMessage() + "\n" + "Aborting sending.";
+                throw new ExitCodeException(1, err, e);
+            }
+        }
+        return messageText;
     }
 
     private int endSession() {
