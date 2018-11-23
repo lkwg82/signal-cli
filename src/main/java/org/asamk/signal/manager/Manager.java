@@ -77,6 +77,10 @@ public class Manager implements Signal {
     private final String attachmentsPath;
     private final String avatarsPath;
 
+    public SignalAccount getAccount() {
+        return account;
+    }
+
     private SignalAccount account;
 
     private String username;

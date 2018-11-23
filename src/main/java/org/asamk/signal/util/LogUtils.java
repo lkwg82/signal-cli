@@ -22,7 +22,7 @@ public class LogUtils {
                     default:
                         String[] args = Arrays.copyOfRange(entries, 1, entries.length);
                         String format = entries[0];
-                        _debug(String.format(format, args));
+                        _debug(String.format(format, (Object[]) args));
                 }
             }
         }

@@ -72,16 +72,6 @@ class LogUtilsTest {
 
             expectedLog("empty args - not nice");
         }
-
-        @DisplayName("should emit error on null args")
-        @Test
-        void test5() {
-            LogUtils.DEBUG_ENABLED = true;
-
-            LogUtils.debug(null);
-
-            expectedLog("null args - plz fix");
-        }
     }
 
     private void expectedLog(String expected) {
