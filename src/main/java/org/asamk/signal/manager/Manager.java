@@ -132,6 +132,10 @@ public class Manager implements Signal {
     private final String avatarsPath;
     private final SleepTimer timer = new UptimeSleepTimer();
 
+    public SignalAccount getAccount() {
+        return account;
+    }
+
     private SignalAccount account;
     private String username;
     private SignalServiceAccountManager accountManager;
