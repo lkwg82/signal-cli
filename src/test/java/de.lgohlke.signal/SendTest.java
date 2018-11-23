@@ -14,6 +14,7 @@ import org.asamk.signal.manager.BaseConfig;
 import org.asamk.signal.manager.Manager;
 import org.asamk.signal.storage.SignalAccount;
 import org.asamk.signal.util.LogUtils;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.signal.libsignal.metadata.*;
@@ -51,10 +52,10 @@ class SendTest {
     private SignalContact contact1;
     private SignalUser user2;
     private SignalContact contact2;
+    private Manager manager2;
 
     @BeforeEach
     void setUp() throws IOException, InterruptedException {
-        TimeUnit.SECONDS.sleep(5);
 
         LogUtils.DEBUG_ENABLED = true;
         debug("THREAD" + Thread.currentThread());
@@ -71,13 +72,19 @@ class SendTest {
 
         manager1 = new Manager(username1, settingsPath);
         manager1.init();
-        Manager manager2 = new Manager(username2, settingsPath);
+        manager2 = new Manager(username2, settingsPath);
         manager2.init();
 
         user1 = new SignalUser(username1, manager1);
         user2 = new SignalUser(username2, manager2);
         contact1 = new SignalContact(username1);
         contact2 = new SignalContact(username2);
+    }
+
+    @AfterEach
+    void tearDown() throws IOException {
+        manager1.shutdown();
+        manager2.shutdown();
     }
 
     @Test
