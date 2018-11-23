@@ -67,7 +67,8 @@ public class SignalAccount {
         debug("load account config");
         SignalAccount account = new SignalAccount();
         IOUtils.createPrivateDirectories(dataPath);
-        account.openFileChannel(getFileName(dataPath, username));
+        String fileName = getFileName(dataPath, username);
+        account.openFileChannel(fileName);
         account.load();
         return account;
     }
@@ -149,29 +150,36 @@ public class SignalAccount {
         if (node != null) {
             deviceId = node.asInt();
         }
-        username = Util.getNotNullNode(rootNode, "username").asText();
-        password = Util.getNotNullNode(rootNode, "password").asText();
+        username = Util.getNotNullNode(rootNode, "username")
+                       .asText();
+        password = Util.getNotNullNode(rootNode, "password")
+                       .asText();
         JsonNode pinNode = rootNode.get("registrationLockPin");
         registrationLockPin = pinNode == null ? null : pinNode.asText();
         if (rootNode.has("signalingKey")) {
-            signalingKey = Util.getNotNullNode(rootNode, "signalingKey").asText();
+            signalingKey = Util.getNotNullNode(rootNode, "signalingKey")
+                               .asText();
         }
         if (rootNode.has("preKeyIdOffset")) {
-            preKeyIdOffset = Util.getNotNullNode(rootNode, "preKeyIdOffset").asInt(0);
+            preKeyIdOffset = Util.getNotNullNode(rootNode, "preKeyIdOffset")
+                                 .asInt(0);
         } else {
             preKeyIdOffset = 0;
         }
         if (rootNode.has("nextSignedPreKeyId")) {
-            nextSignedPreKeyId = Util.getNotNullNode(rootNode, "nextSignedPreKeyId").asInt();
+            nextSignedPreKeyId = Util.getNotNullNode(rootNode, "nextSignedPreKeyId")
+                                     .asInt();
         } else {
             nextSignedPreKeyId = 0;
         }
         if (rootNode.has("profileKey")) {
-            profileKey = Base64.decode(Util.getNotNullNode(rootNode, "profileKey").asText());
+            profileKey = Base64.decode(Util.getNotNullNode(rootNode, "profileKey")
+                                           .asText());
         }
 
         signalProtocolStore = jsonProcessor.convertValue(Util.getNotNullNode(rootNode, "axolotlStore"), JsonSignalProtocolStore.class);
-        registered = Util.getNotNullNode(rootNode, "registered").asBoolean();
+        registered = Util.getNotNullNode(rootNode, "registered")
+                         .asBoolean();
         JsonNode groupStoreNode = rootNode.get("groupStore");
         if (groupStoreNode != null) {
             groupStore = jsonProcessor.convertValue(groupStoreNode, JsonGroupStore.class);
@@ -199,6 +207,7 @@ public class SignalAccount {
     public void save() {
         debug("save config");
         if (fileChannel == null) {
+            debug("can not save, filechannel already closed");
             return;
         }
         ObjectNode rootNode = jsonProcessor.createObjectNode();
@@ -239,6 +248,23 @@ public class SignalAccount {
             System.err.println("Config file is in use by another instance, waiting…");
             lock = fileChannel.lock();
             System.err.println("Config file lock acquired.");
+        }
+    }
+
+    public void close() throws IOException {
+        if (fileChannel == null) {
+            return;
+        }
+        try {
+            lock.release();
+        } finally {
+            lock = null;
+        }
+        
+        try {
+            fileChannel.close();
+        } finally {
+            fileChannel = null;
         }
     }
 
