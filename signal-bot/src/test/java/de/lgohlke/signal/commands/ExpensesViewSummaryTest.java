@@ -7,53 +7,68 @@ import lombok.SneakyThrows;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
+import org.apache.commons.io.IOUtils;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockserver.client.MockServerClient;
-import org.mockserver.model.HttpRequest;
+import org.mockserver.integration.ClientAndServer;
 import org.mockserver.model.HttpResponse;
-import org.mockserver.verify.VerificationTimes;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.net.ServerSocket;
+import java.io.InputStream;
+import java.util.Base64;
 
 import static org.mockserver.integration.ClientAndServer.startClientAndServer;
+import static org.mockserver.model.HttpRequest.request;
+import static org.mockserver.verify.VerificationTimes.once;
 
 class ExpensesViewSummaryTest {
 
-    private MockServerClient mockServer;
+    private ClientAndServer mockServer;
     private int localPort;
 
     @BeforeEach
     void startMockServer() throws IOException {
-        ServerSocket serverSocket = new ServerSocket(0);
-        localPort = serverSocket.getLocalPort();
-        serverSocket.close();
-        mockServer = startClientAndServer(localPort);
+        mockServer = startClientAndServer();
     }
 
     @AfterEach
     void stopMockServer() {
-        mockServer.stop();
+        mockServer.stop(true);
     }
 
     @Test
     void testCommand() throws IOException {
+        String url = "http://localhost:" + mockServer.getLocalPort() + "/test";
+
         ConfigProvider testConfigProvider = new ConfigProvider() {
             @Override
             public String getUrlFromConfig(@NonNull String key) {
-                return "http://localhost:" + localPort + "/test";
+                return url;
             }
         };
 
-        mockServer.when(HttpRequest.request())
+        mockServer.when(request()
+                .withPath("/test"))
                   .respond(HttpResponse.response()
-                                       .withStatusCode(200));
+                                       .withStatusCode(200)
+                                       .withBody("{\"pdf\":\"" + createBase64FromTestPdf() + "\"}")
+                  );
 
         new ExpensesViewSummary(testConfigProvider).execute();
 
-        mockServer.verify(HttpRequest.request(), VerificationTimes.once());
+        mockServer.verify(request().withPath("/test"), once());
+    }
+
+    private String createBase64FromTestPdf() throws IOException {
+        InputStream pdfStream = Thread.currentThread()
+                                      .getContextClassLoader()
+                                      .getResourceAsStream("google-tos.pdf");
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        IOUtils.copy(pdfStream, outputStream);
+        return Base64.getEncoder()
+                     .encodeToString(outputStream.toByteArray());
     }
 
     interface RequestReplyCommand {
