@@ -17,4 +17,5 @@ include 'services:webservice'
 
 rootProject.name = 'signal-cli'
 include 'pdf-convert'
+include 'signal-bot'
 
