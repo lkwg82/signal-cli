@@ -7,6 +7,7 @@ import org.asamk.signal.manager.Manager;
 import org.whispersystems.signalservice.api.push.exceptions.EncapsulatedExceptions;
 
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -42,7 +43,7 @@ class SignalUser {
         private void _execute() {
             try {
                 List<String> recipients = Collections.singletonList(to.contact.id);
-                List<String> attachments = new ArrayList<>();
+                List<String> attachments = message.attachmentPaths;
                 String message = this.message.message;
 
                 Manager manager = context.getManager();
@@ -63,7 +64,7 @@ class SignalUser {
 
             private final SignalContact contact;
 
-            Message message(String text) {
+            Message text(String text) {
                 message = new Message(text);
                 return message;
             }
@@ -72,10 +73,17 @@ class SignalUser {
         @RequiredArgsConstructor
         class Message {
 
+            private final List<String> attachmentPaths = new ArrayList<>();
             private final String message;
 
             void execute() {
                 _execute();
+            }
+
+            Message attachment(Path tempJpeg) {
+                attachmentPaths.add(tempJpeg.toFile()
+                                            .getAbsolutePath());
+                return this;
             }
         }
     }

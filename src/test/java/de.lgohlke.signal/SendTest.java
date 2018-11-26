@@ -33,7 +33,12 @@ import org.whispersystems.signalservice.api.push.SignalServiceAddress;
 import org.whispersystems.signalservice.api.util.UptimeSleepTimer;
 import org.whispersystems.signalservice.internal.util.Base64;
 
+import javax.imageio.ImageIO;
+import java.awt.*;
+import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -58,7 +63,7 @@ class SendTest {
     void setUp() throws IOException, InterruptedException {
 
         LogUtils.DEBUG_ENABLED = true;
-        debug("THREAD" + Thread.currentThread());
+        debug("THREAD " + Thread.currentThread());
 
         installSecurityProviderWorkaround();
 
@@ -87,15 +92,15 @@ class SendTest {
         manager2.shutdown();
     }
 
-    @Test
+    //    @Test
     void send() {
         user1.send()
              .to(contact1)
-             .message("test  " + System.nanoTime())
+             .text("test  " + System.nanoTime())
              .execute();
         user2.send()
              .to(contact1)
-             .message("test  " + System.nanoTime())
+             .text("test  " + System.nanoTime())
              .execute();
     }
 
@@ -103,42 +108,16 @@ class SendTest {
     void sendAndReceive() throws Exception {
         SignalAccount account = manager1.getAccount();
 
-        SignalServiceMessageReceiver messageReceiver = new SignalServiceMessageReceiver(BaseConfig.serviceConfiguration,
-                username1,
-                account.getPassword(),
-                account.getDeviceId(),
-                account.getSignalingKey(),
-                BaseConfig.USER_AGENT,
-                new DefaultConnectivityListener(),
-                new UptimeSleepTimer());
-
-        SignalServiceMessagePipe messagePipe = messageReceiver.createMessagePipe();
-
         BlockingQueue<SignalReceivedMessage> receivedMessages = new ArrayBlockingQueue<>(2);
 
-        Runnable receiver = () -> {
-            while (true) {
-                try {
-                    SignalServiceEnvelope envelope = messagePipe.read(30, TimeUnit.SECONDS);
-                    SignalServiceContent message = decryptMessage(envelope, account);
-
-                    SignalReceivedMessage receivedMessage = new SignalReceivedMessage(envelope, message);
-                    receivedMessages.add(receivedMessage);
-                } catch (InvalidVersionException | IOException e) {
-                    e.printStackTrace();
-                } catch (TimeoutException e) {
-                    debug(e.getMessage());
-                }
-            }
-        };
-
         ExecutorService receiverService = Executors.newSingleThreadExecutor();
+        Runnable receiver = createReceiverJob(account, receivedMessages);
         receiverService.submit(receiver);
 
         String expectedMessage = "qq  " + System.nanoTime();
         user2.send()
              .to(contact1)
-             .message(expectedMessage)
+             .text(expectedMessage)
              .execute();
 
         AtomicBoolean found = new AtomicBoolean(false);
@@ -164,6 +143,91 @@ class SendTest {
         }
 
         receiverService.shutdownNow();
+    }
+
+    private Runnable createReceiverJob(SignalAccount account, BlockingQueue<SignalReceivedMessage> receivedMessages) {
+        SignalServiceMessageReceiver messageReceiver = new SignalServiceMessageReceiver(BaseConfig.serviceConfiguration,
+                username1,
+                account.getPassword(),
+                account.getDeviceId(),
+                account.getSignalingKey(),
+                BaseConfig.USER_AGENT,
+                new DefaultConnectivityListener(),
+                new UptimeSleepTimer());
+
+        SignalServiceMessagePipe messagePipe = messageReceiver.createMessagePipe();
+
+        return () -> {
+            while (true) {
+                try {
+                    SignalServiceEnvelope envelope = messagePipe.read(5, TimeUnit.SECONDS);
+                    SignalServiceContent message = decryptMessage(envelope, account);
+
+                    SignalReceivedMessage receivedMessage = new SignalReceivedMessage(envelope, message);
+                    debug("got message from " + receivedMessage.getSource());
+                    receivedMessages.add(receivedMessage);
+                } catch (InvalidVersionException | IOException e) {
+                    e.printStackTrace();
+                } catch (TimeoutException e) {
+                    debug(e.getMessage());
+                }
+            }
+        };
+    }
+
+    @Test
+    void sendAttachment() throws Exception {
+        SignalAccount account = manager1.getAccount();
+
+        BlockingQueue<SignalReceivedMessage> receivedMessages = new ArrayBlockingQueue<>(2);
+
+        ExecutorService receiverService = Executors.newSingleThreadExecutor();
+        Runnable receiver = createReceiverJob(account, receivedMessages);
+        receiverService.submit(receiver);
+
+        Path tempJpeg = Files.createTempFile(System.nanoTime() + "", ".jpg");
+
+        BufferedImage image = createImage();
+        ImageIO.write(image, "jpg", tempJpeg.toFile());
+
+        String expectedMessage = "qq  " + System.nanoTime();
+        user2.send()
+             .to(contact1)
+             .text(expectedMessage)
+             .attachment(tempJpeg)
+             .execute();
+
+        AtomicBoolean found = new AtomicBoolean(false);
+        while (!found.get()) {
+            SignalReceivedMessage message = receivedMessages.poll(1, TimeUnit.SECONDS);
+            if (null != message) {
+                message.dataMessage()
+                       .map(m -> {
+                           debug("received message");
+                           m.getBody()
+                            .transform(body -> {
+                                debug(" text '%s'", body);
+                                if (expectedMessage.equals(body) && m.getAttachments()
+                                                                     .isPresent()) {
+                                    found.set(true);
+                                    debug(" as expected");
+                                }
+                                return body;
+                            });
+
+                           return m;
+                       });
+            }
+        }
+
+        receiverService.shutdownNow();
+    }
+
+    private BufferedImage createImage() {
+        BufferedImage image = new BufferedImage(100, 100, BufferedImage.TYPE_INT_RGB);
+        Graphics g = image.getGraphics();
+        g.drawString("Hello World!!!", 10, 20);
+        return image;
     }
 
     private SignalServiceContent decryptMessage(SignalServiceEnvelope envelope, SignalAccount account) {
