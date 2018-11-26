@@ -9,6 +9,7 @@ import org.whispersystems.signalservice.api.push.exceptions.EncapsulatedExceptio
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 
 @RequiredArgsConstructor
 class SignalUser {
@@ -40,7 +41,13 @@ class SignalUser {
 
         private void _execute() {
             try {
-                manager.sendMessage(message.message, new ArrayList<>(), Collections.singletonList(to.contact.id));
+                List<String> recipients = Collections.singletonList(to.contact.id);
+                List<String> attachments = new ArrayList<>();
+                String message = this.message.message;
+
+                Manager manager = context.getManager();
+
+                manager.sendMessage(message, attachments, recipients);
             } catch (IOException | EncapsulatedExceptions e) {
                 e.printStackTrace();
             }
