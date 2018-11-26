@@ -24,6 +24,7 @@ dependencies {
 
     compile 'com.squareup.okhttp3:okhttp:3.12.0'
     compile 'org.json:json:20180813'
+    testCompile 'org.slf4j:slf4j-simple:1.8.0-beta2'
 
     testCompile 'org.junit.jupiter:junit-jupiter-api:5.3.1'
     testCompile 'org.junit.jupiter:junit-jupiter-engine:5.3.1'
