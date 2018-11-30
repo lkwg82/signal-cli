@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.databind.ser.std.StdSerializer;
+import jdk.nashorn.internal.ir.annotations.Ignore;
 import org.apache.commons.io.FileUtils;
 import org.asamk.signal.manager.BaseConfig;
 import org.asamk.signal.manager.Manager;
@@ -17,7 +18,17 @@ import org.asamk.signal.util.LogUtils;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.signal.libsignal.metadata.*;
+import org.signal.libsignal.metadata.InvalidMetadataMessageException;
+import org.signal.libsignal.metadata.InvalidMetadataVersionException;
+import org.signal.libsignal.metadata.ProtocolDuplicateMessageException;
+import org.signal.libsignal.metadata.ProtocolInvalidKeyException;
+import org.signal.libsignal.metadata.ProtocolInvalidKeyIdException;
+import org.signal.libsignal.metadata.ProtocolInvalidMessageException;
+import org.signal.libsignal.metadata.ProtocolInvalidVersionException;
+import org.signal.libsignal.metadata.ProtocolLegacyMessageException;
+import org.signal.libsignal.metadata.ProtocolNoSessionException;
+import org.signal.libsignal.metadata.ProtocolUntrustedIdentityException;
+import org.signal.libsignal.metadata.SelfSendException;
 import org.signal.libsignal.metadata.certificate.CertificateValidator;
 import org.whispersystems.libsignal.InvalidKeyException;
 import org.whispersystems.libsignal.InvalidVersionException;
@@ -28,6 +39,7 @@ import org.whispersystems.signalservice.api.SignalServiceMessagePipe;
 import org.whispersystems.signalservice.api.SignalServiceMessageReceiver;
 import org.whispersystems.signalservice.api.crypto.SignalServiceCipher;
 import org.whispersystems.signalservice.api.messages.SignalServiceContent;
+import org.whispersystems.signalservice.api.messages.SignalServiceDataMessage;
 import org.whispersystems.signalservice.api.messages.SignalServiceEnvelope;
 import org.whispersystems.signalservice.api.push.SignalServiceAddress;
 import org.whispersystems.signalservice.api.util.UptimeSleepTimer;
@@ -40,7 +52,12 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.concurrent.*;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static java.nio.charset.Charset.defaultCharset;
@@ -48,6 +65,7 @@ import static org.asamk.signal.Main.installSecurityProviderWorkaround;
 import static org.asamk.signal.Main.retrieveLocalSettingsPath;
 import static org.asamk.signal.util.LogUtils.debug;
 
+@Ignore
 class SendTest {
 
     private Manager manager1;
@@ -69,11 +87,11 @@ class SendTest {
 
         String settingsPath = retrieveLocalSettingsPath();
         username1 = FileUtils.readFileToString(Paths.get(settingsPath, "test-username1")
-                                                    .toFile(), defaultCharset())
-                             .trim();
+                .toFile(), defaultCharset())
+                .trim();
         username2 = FileUtils.readFileToString(Paths.get(settingsPath, "test-username2")
-                                                    .toFile(), defaultCharset())
-                             .trim();
+                .toFile(), defaultCharset())
+                .trim();
 
         manager1 = new Manager(username1, settingsPath);
         manager1.init();
@@ -95,16 +113,16 @@ class SendTest {
     //    @Test
     void send() {
         user1.send()
-             .to(contact1)
-             .text("test  " + System.nanoTime())
-             .execute();
+                .to(contact1)
+                .text("test  " + System.nanoTime())
+                .execute();
         user2.send()
-             .to(contact1)
-             .text("test  " + System.nanoTime())
-             .execute();
+                .to(contact1)
+                .text("test  " + System.nanoTime())
+                .execute();
     }
 
-    @Test
+    //    @Test
     void sendAndReceive() throws Exception {
         SignalAccount account = manager1.getAccount();
 
@@ -116,33 +134,50 @@ class SendTest {
 
         String expectedMessage = "qq  " + System.nanoTime();
         user2.send()
-             .to(contact1)
-             .text(expectedMessage)
-             .execute();
+                .to(contact1)
+                .text(expectedMessage)
+                .execute();
 
         AtomicBoolean found = new AtomicBoolean(false);
         while (!found.get()) {
             SignalReceivedMessage message = receivedMessages.poll(1, TimeUnit.SECONDS);
             if (null != message) {
                 message.dataMessage()
-                       .map(m -> {
-                           debug("received message");
-                           m.getBody()
-                            .transform(body -> {
-                                debug(" text '%s'", body);
-                                if (expectedMessage.equals(body)) {
-                                    found.set(true);
-                                    debug(" as expected");
-                                }
-                                return body;
-                            });
+                        .map(m -> {
+                            debug("received message");
+                            m.getBody()
+                                    .transform(body -> {
+                                        debug(" text '%s'", body);
+                                        if (expectedMessage.equals(body)) {
+                                            found.set(true);
+                                            debug(" as expected");
+                                        }
+                                        return body;
+                                    });
 
-                           return m;
-                       });
+                            return m;
+                        });
             }
         }
 
         receiverService.shutdownNow();
+    }
+
+
+    // interactive
+//    @Test
+    void receive() throws Exception {
+
+        manager1.receiveMessages(1, TimeUnit.HOURS, false, true, new Manager.ReceiveMessageHandler() {
+            @Override
+            public void handleMessage(SignalServiceEnvelope envelope, SignalServiceContent decryptedContent, Throwable e) {
+                if (null != decryptedContent) {
+                    debug("FROM: " + decryptedContent.getSender());
+                    debug("Text: " + decryptedContent.getDataMessage().transform(SignalServiceDataMessage::getBody));
+                }
+            }
+        });
+
     }
 
     private Runnable createReceiverJob(SignalAccount account, BlockingQueue<SignalReceivedMessage> receivedMessages) {
@@ -192,31 +227,31 @@ class SendTest {
 
         String expectedMessage = "qq  " + System.nanoTime();
         user2.send()
-             .to(contact1)
-             .text(expectedMessage)
-             .attachment(tempJpeg)
-             .execute();
+                .to(contact1)
+                .text(expectedMessage)
+                .attachment(tempJpeg)
+                .execute();
 
         AtomicBoolean found = new AtomicBoolean(false);
         while (!found.get()) {
             SignalReceivedMessage message = receivedMessages.poll(1, TimeUnit.SECONDS);
             if (null != message) {
                 message.dataMessage()
-                       .map(m -> {
-                           debug("received message");
-                           m.getBody()
-                            .transform(body -> {
-                                debug(" text '%s'", body);
-                                if (expectedMessage.equals(body) && m.getAttachments()
-                                                                     .isPresent()) {
-                                    found.set(true);
-                                    debug(" as expected");
-                                }
-                                return body;
-                            });
+                        .map(m -> {
+                            debug("received message");
+                            m.getBody()
+                                    .transform(body -> {
+                                        debug(" text '%s'", body);
+                                        if (expectedMessage.equals(body) && m.getAttachments()
+                                                .isPresent()) {
+                                            found.set(true);
+                                            debug(" as expected");
+                                        }
+                                        return body;
+                                    });
 
-                           return m;
-                       });
+                            return m;
+                        });
             }
         }
 
@@ -276,7 +311,7 @@ class SendTest {
             this(null);
         }
 
-        protected OptionalSerialzer(Class<Optional> t) {
+        OptionalSerialzer(Class<Optional> t) {
             super(t);
         }
 
@@ -286,7 +321,7 @@ class SendTest {
             if (optional.isPresent()) {
                 Object value = optional.get();
                 if (value.getClass()
-                         .isPrimitive() || value instanceof String) {
+                        .isPrimitive() || value instanceof String) {
                     jgen.writeString(value + "");
                 } else {
                     jgen.writeStartObject();
