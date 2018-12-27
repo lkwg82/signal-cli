@@ -17,7 +17,11 @@
 package org.asamk.signal.manager;
 
 import org.asamk.Signal;
-import org.asamk.signal.*;
+import org.asamk.signal.AttachmentInvalidException;
+import org.asamk.signal.GroupNotFoundException;
+import org.asamk.signal.NotAGroupMemberException;
+import org.asamk.signal.TrustLevel;
+import org.asamk.signal.UserAlreadyExists;
 import org.asamk.signal.storage.SignalAccount;
 import org.asamk.signal.storage.contacts.ContactInfo;
 import org.asamk.signal.storage.groups.GroupInfo;
@@ -27,8 +31,22 @@ import org.asamk.signal.storage.threads.ThreadInfo;
 import org.asamk.signal.util.IOUtils;
 import org.asamk.signal.util.LogUtils;
 import org.asamk.signal.util.Util;
-import org.signal.libsignal.metadata.*;
-import org.whispersystems.libsignal.*;
+import org.signal.libsignal.metadata.InvalidMetadataMessageException;
+import org.signal.libsignal.metadata.InvalidMetadataVersionException;
+import org.signal.libsignal.metadata.ProtocolDuplicateMessageException;
+import org.signal.libsignal.metadata.ProtocolInvalidKeyException;
+import org.signal.libsignal.metadata.ProtocolInvalidKeyIdException;
+import org.signal.libsignal.metadata.ProtocolInvalidMessageException;
+import org.signal.libsignal.metadata.ProtocolInvalidVersionException;
+import org.signal.libsignal.metadata.ProtocolLegacyMessageException;
+import org.signal.libsignal.metadata.ProtocolNoSessionException;
+import org.signal.libsignal.metadata.ProtocolUntrustedIdentityException;
+import org.signal.libsignal.metadata.SelfSendException;
+import org.whispersystems.libsignal.IdentityKey;
+import org.whispersystems.libsignal.IdentityKeyPair;
+import org.whispersystems.libsignal.InvalidKeyException;
+import org.whispersystems.libsignal.InvalidMessageException;
+import org.whispersystems.libsignal.InvalidVersionException;
 import org.whispersystems.libsignal.ecc.Curve;
 import org.whispersystems.libsignal.ecc.ECKeyPair;
 import org.whispersystems.libsignal.ecc.ECPublicKey;
@@ -45,8 +63,25 @@ import org.whispersystems.signalservice.api.crypto.SignalServiceCipher;
 import org.whispersystems.signalservice.api.crypto.UnidentifiedAccess;
 import org.whispersystems.signalservice.api.crypto.UnidentifiedAccessPair;
 import org.whispersystems.signalservice.api.crypto.UntrustedIdentityException;
-import org.whispersystems.signalservice.api.messages.*;
-import org.whispersystems.signalservice.api.messages.multidevice.*;
+import org.whispersystems.signalservice.api.messages.SendMessageResult;
+import org.whispersystems.signalservice.api.messages.SignalServiceAttachment;
+import org.whispersystems.signalservice.api.messages.SignalServiceAttachmentPointer;
+import org.whispersystems.signalservice.api.messages.SignalServiceAttachmentStream;
+import org.whispersystems.signalservice.api.messages.SignalServiceContent;
+import org.whispersystems.signalservice.api.messages.SignalServiceDataMessage;
+import org.whispersystems.signalservice.api.messages.SignalServiceEnvelope;
+import org.whispersystems.signalservice.api.messages.SignalServiceGroup;
+import org.whispersystems.signalservice.api.messages.multidevice.ContactsMessage;
+import org.whispersystems.signalservice.api.messages.multidevice.DeviceContact;
+import org.whispersystems.signalservice.api.messages.multidevice.DeviceContactsInputStream;
+import org.whispersystems.signalservice.api.messages.multidevice.DeviceContactsOutputStream;
+import org.whispersystems.signalservice.api.messages.multidevice.DeviceGroup;
+import org.whispersystems.signalservice.api.messages.multidevice.DeviceGroupsInputStream;
+import org.whispersystems.signalservice.api.messages.multidevice.DeviceGroupsOutputStream;
+import org.whispersystems.signalservice.api.messages.multidevice.DeviceInfo;
+import org.whispersystems.signalservice.api.messages.multidevice.RequestMessage;
+import org.whispersystems.signalservice.api.messages.multidevice.SignalServiceSyncMessage;
+import org.whispersystems.signalservice.api.messages.multidevice.VerifiedMessage;
 import org.whispersystems.signalservice.api.push.ContactTokenDetails;
 import org.whispersystems.signalservice.api.push.SignalServiceAddress;
 import org.whispersystems.signalservice.api.push.exceptions.AuthorizationFailedException;
@@ -59,12 +94,28 @@ import org.whispersystems.signalservice.api.util.UptimeSleepTimer;
 import org.whispersystems.signalservice.internal.push.SignalServiceProtos;
 import org.whispersystems.signalservice.internal.util.Base64;
 
-import java.io.*;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Date;
+import java.util.HashSet;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
@@ -91,9 +142,9 @@ public class Manager implements Signal {
     public Manager(String username, String settingsPath) {
         this.username = username;
         this.settingsPath = settingsPath;
-        this.dataPath = this.settingsPath + "/data";
-        this.attachmentsPath = this.settingsPath + "/attachments";
-        this.avatarsPath = this.settingsPath + "/avatars";
+        dataPath = this.settingsPath + "/data";
+        attachmentsPath = this.settingsPath + "/attachments";
+        avatarsPath = this.settingsPath + "/avatars";
 
     }
 
@@ -112,7 +163,7 @@ public class Manager implements Signal {
     }
 
     private String getMessageCachePath() {
-        return this.dataPath + "/" + username + ".d/msg-cache";
+        return dataPath + "/" + username + ".d/msg-cache";
     }
 
     private String getMessageCachePath(String sender) {
@@ -138,7 +189,12 @@ public class Manager implements Signal {
 
         migrateLegacyConfigs();
 
-        accountManager = new SignalServiceAccountManager(BaseConfig.serviceConfiguration, username, account.getPassword(), account.getDeviceId(), BaseConfig.USER_AGENT, timer);
+        accountManager = new SignalServiceAccountManager(BaseConfig.serviceConfiguration,
+                                                         username,
+                                                         account.getPassword(),
+                                                         account.getDeviceId(),
+                                                         BaseConfig.USER_AGENT,
+                                                         timer);
         try {
             debug("get pre keys count");
             if (account.isRegistered() && accountManager.getPreKeysCount() < BaseConfig.PREKEY_MINIMUM_COUNT) {
@@ -197,20 +253,30 @@ public class Manager implements Signal {
             createNewIdentity();
         }
         account.setPassword(KeyUtils.createPassword());
-        accountManager = new SignalServiceAccountManager(BaseConfig.serviceConfiguration, account.getUsername(), account.getPassword(), BaseConfig.USER_AGENT, timer);
+        accountManager = new SignalServiceAccountManager(BaseConfig.serviceConfiguration,
+                                                         account.getUsername(),
+                                                         account.getPassword(),
+                                                         BaseConfig.USER_AGENT,
+                                                         timer);
 
-        if (voiceVerification)
+        if (voiceVerification) {
             accountManager.requestVoiceVerificationCode();
-        else
+        } else {
             accountManager.requestSmsVerificationCode();
+        }
 
         account.setRegistered(false);
         account.save();
     }
 
     public void updateAccountAttributes() throws IOException {
-        accountManager.setAccountAttributes(account.getSignalingKey(), account.getSignalProtocolStore()
-                                                                              .getLocalRegistrationId(), true, account.getRegistrationLockPin(), getSelfUnidentifiedAccessKey(), false);
+        accountManager.setAccountAttributes(account.getSignalingKey(),
+                                            account.getSignalProtocolStore()
+                                                   .getLocalRegistrationId(),
+                                            true,
+                                            account.getRegistrationLockPin(),
+                                            getSelfUnidentifiedAccessKey(),
+                                            false);
     }
 
     public void unregister() throws IOException {
@@ -225,7 +291,11 @@ public class Manager implements Signal {
             createNewIdentity();
         }
         account.setPassword(KeyUtils.createPassword());
-        accountManager = new SignalServiceAccountManager(BaseConfig.serviceConfiguration, username, account.getPassword(), BaseConfig.USER_AGENT, timer);
+        accountManager = new SignalServiceAccountManager(BaseConfig.serviceConfiguration,
+                                                         username,
+                                                         account.getPassword(),
+                                                         BaseConfig.USER_AGENT,
+                                                         timer);
         String uuid = accountManager.getNewDeviceUuid();
 
         return Utils.createDeviceLinkUri(new Utils.DeviceLinkInfo(uuid, getIdentity().getPublicKey()));
@@ -234,8 +304,13 @@ public class Manager implements Signal {
     public void finishDeviceLink(String deviceName) throws IOException, InvalidKeyException, TimeoutException, UserAlreadyExists {
         account.setSignalingKey(KeyUtils.createSignalingKey());
         SignalServiceAccountManager.NewDeviceRegistrationReturn ret = accountManager.finishNewDeviceRegistration(account.getSignalProtocolStore()
-                                                                                                                        .getIdentityKeyPair(), account.getSignalingKey(), false, true, account.getSignalProtocolStore()
-                                                                                                                                                                                              .getLocalRegistrationId(), deviceName);
+                                                                                                                        .getIdentityKeyPair(),
+                                                                                                                 account.getSignalingKey(),
+                                                                                                                 false,
+                                                                                                                 true,
+                                                                                                                 account.getSignalProtocolStore()
+                                                                                                                        .getLocalRegistrationId(),
+                                                                                                                 deviceName);
 
         username = ret.getNumber();
         // TODO do this check before actually registering
@@ -248,8 +323,15 @@ public class Manager implements Signal {
         if (profileKey == null) {
             profileKey = KeyUtils.createProfileKey();
         }
-        account = SignalAccount.createLinkedAccount(dataPath, username, account.getPassword(), ret.getDeviceId(), ret.getIdentity(), account.getSignalProtocolStore()
-                                                                                                                                            .getLocalRegistrationId(), account.getSignalingKey(), profileKey);
+        account = SignalAccount.createLinkedAccount(dataPath,
+                                                    username,
+                                                    account.getPassword(),
+                                                    ret.getDeviceId(),
+                                                    ret.getIdentity(),
+                                                    account.getSignalProtocolStore()
+                                                           .getLocalRegistrationId(),
+                                                    account.getSignalingKey(),
+                                                    profileKey);
 
         refreshPreKeys();
 
@@ -286,7 +368,11 @@ public class Manager implements Signal {
                                                  .getIdentityKeyPair();
         String verificationCode = accountManager.getNewDeviceVerificationCode();
 
-        accountManager.addDevice(deviceIdentifier, deviceKey, identityKeyPair, Optional.of(account.getProfileKey()), verificationCode);
+        accountManager.addDevice(deviceIdentifier,
+                                 deviceKey,
+                                 identityKeyPair,
+                                 Optional.of(account.getProfileKey()),
+                                 verificationCode);
         account.setMultiDevice(true);
         account.save();
     }
@@ -294,7 +380,7 @@ public class Manager implements Signal {
     private List<PreKeyRecord> generatePreKeys() {
         List<PreKeyRecord> records = new ArrayList<>(BaseConfig.PREKEY_BATCH_SIZE);
 
-        final int offset = account.getPreKeyIdOffset();
+        int offset = account.getPreKeyIdOffset();
         for (int i = 0; i < BaseConfig.PREKEY_BATCH_SIZE; i++) {
             int preKeyId = (offset + i) % Medium.MAX_VALUE;
             ECKeyPair keyPair = Curve.generateKeyPair();
@@ -314,7 +400,10 @@ public class Manager implements Signal {
             ECKeyPair keyPair = Curve.generateKeyPair();
             byte[] signature = Curve.calculateSignature(identityKeyPair.getPrivateKey(), keyPair.getPublicKey()
                                                                                                 .serialize());
-            SignedPreKeyRecord record = new SignedPreKeyRecord(account.getNextSignedPreKeyId(), System.currentTimeMillis(), keyPair, signature);
+            SignedPreKeyRecord record = new SignedPreKeyRecord(account.getNextSignedPreKeyId(),
+                                                               System.currentTimeMillis(),
+                                                               keyPair,
+                                                               signature);
 
             account.addSignedPreKey(record);
             account.save();
@@ -329,8 +418,14 @@ public class Manager implements Signal {
         verificationCode = verificationCode.replace("-", "");
         account.setSignalingKey(KeyUtils.createSignalingKey());
         // TODO make unrestricted unidentified access configurable
-        accountManager.verifyAccountWithCode(verificationCode, account.getSignalingKey(), account.getSignalProtocolStore()
-                                                                                                 .getLocalRegistrationId(), true, pin, getSelfUnidentifiedAccessKey(), false);
+        accountManager.verifyAccountWithCode(verificationCode,
+                                             account.getSignalingKey(),
+                                             account.getSignalProtocolStore()
+                                                    .getLocalRegistrationId(),
+                                             true,
+                                             pin,
+                                             getSelfUnidentifiedAccessKey(),
+                                             false);
 
         //accountManager.setGcmId(Optional.of(GoogleCloudMessaging.getInstance(this).register(REGISTRATION_ID)));
         account.setRegistered(true);
@@ -353,8 +448,8 @@ public class Manager implements Signal {
     private void refreshPreKeys() throws IOException {
         debug("refresh pre keys");
         List<PreKeyRecord> oneTimePreKeys = generatePreKeys();
-        final IdentityKeyPair identityKeyPair = account.getSignalProtocolStore()
-                                                       .getIdentityKeyPair();
+        IdentityKeyPair identityKeyPair = account.getSignalProtocolStore()
+                                                 .getIdentityKeyPair();
         SignedPreKeyRecord signedPreKeyRecord = generateSignedPreKey(identityKeyPair);
 
         accountManager.setPreKeys(getIdentity(), signedPreKeyRecord, oneTimePreKeys);
@@ -385,7 +480,7 @@ public class Manager implements Signal {
             throw new GroupNotFoundException(groupId);
         }
         for (String member : g.members) {
-            if (member.equals(this.username)) {
+            if (member.equals(username)) {
                 return g;
             }
         }
@@ -401,8 +496,8 @@ public class Manager implements Signal {
     public void sendGroupMessage(String messageText, List<String> attachments,
                                  byte[] groupId)
             throws IOException, EncapsulatedExceptions, GroupNotFoundException, AttachmentInvalidException {
-        final SignalServiceDataMessage.Builder messageBuilder = SignalServiceDataMessage.newBuilder()
-                                                                                        .withBody(messageText);
+        SignalServiceDataMessage.Builder messageBuilder = SignalServiceDataMessage.newBuilder()
+                                                                                  .withBody(messageText);
         if (attachments != null) {
             messageBuilder.withAttachments(Utils.getSignalServiceAttachments(attachments));
         }
@@ -418,11 +513,11 @@ public class Manager implements Signal {
             messageBuilder.withExpiration(thread.messageExpirationTime);
         }
 
-        final GroupInfo g = getGroupForSending(groupId);
+        GroupInfo g = getGroupForSending(groupId);
 
         // Don't send group message to ourself
-        final List<String> membersSend = new ArrayList<>(g.members);
-        membersSend.remove(this.username);
+        List<String> membersSend = new ArrayList<>(g.members);
+        membersSend.remove(username);
         sendMessageLegacy(messageBuilder, membersSend);
     }
 
@@ -434,8 +529,8 @@ public class Manager implements Signal {
         SignalServiceDataMessage.Builder messageBuilder = SignalServiceDataMessage.newBuilder()
                                                                                   .asGroupMessage(group);
 
-        final GroupInfo g = getGroupForSending(groupId);
-        g.members.remove(this.username);
+        GroupInfo g = getGroupForSending(groupId);
+        g.members.remove(username);
         account.getGroupStore()
                .updateGroup(g);
 
@@ -475,13 +570,14 @@ public class Manager implements Signal {
                 newMembers.add(member);
                 g.members.add(member);
             }
-            final List<ContactTokenDetails> contacts = accountManager.getContacts(newMembers);
+            List<ContactTokenDetails> contacts = accountManager.getContacts(newMembers);
             if (contacts.size() != newMembers.size()) {
                 // Some of the new members are not registered on Signal
                 for (ContactTokenDetails contact : contacts) {
                     newMembers.remove(contact.getNumber());
                 }
-                System.err.println("Failed to add members " + Util.join(", ", newMembers) + " to group: Not registered on Signal");
+                System.err.println("Failed to add members " + Util.join(", ",
+                                                                        newMembers) + " to group: Not registered on Signal");
                 System.err.println("Aborting…");
                 System.exit(1);
             }
@@ -499,8 +595,8 @@ public class Manager implements Signal {
         SignalServiceDataMessage.Builder messageBuilder = getGroupUpdateMessageBuilder(g);
 
         // Don't send group message to ourself
-        final List<String> membersSend = new ArrayList<>(g.members);
-        membersSend.remove(this.username);
+        List<String> membersSend = new ArrayList<>(g.members);
+        membersSend.remove(username);
         sendMessageLegacy(messageBuilder, membersSend);
         return g.groupId;
     }
@@ -518,7 +614,7 @@ public class Manager implements Signal {
         SignalServiceDataMessage.Builder messageBuilder = getGroupUpdateMessageBuilder(g);
 
         // Send group message only to the recipient who requested it
-        final List<String> membersSend = new ArrayList<>();
+        List<String> membersSend = new ArrayList<>();
         membersSend.add(recipient);
         sendMessageLegacy(messageBuilder, membersSend);
     }
@@ -554,7 +650,7 @@ public class Manager implements Signal {
                                                                                   .asGroupMessage(group.build());
 
         // Send group info request message to the recipient who sent us a message with this groupId
-        final List<String> membersSend = new ArrayList<>();
+        List<String> membersSend = new ArrayList<>();
         membersSend.add(recipient);
         sendMessageLegacy(messageBuilder, membersSend);
     }
@@ -574,8 +670,8 @@ public class Manager implements Signal {
         debug("send message");
         debug(" text: %s", messageText);
         debug(" receipients: %s", String.join(",", recipients));
-        final SignalServiceDataMessage.Builder messageBuilder = SignalServiceDataMessage.newBuilder()
-                                                                                        .withBody(messageText);
+        SignalServiceDataMessage.Builder messageBuilder = SignalServiceDataMessage.newBuilder()
+                                                                                  .withBody(messageText);
         if (attachments != null) {
             messageBuilder.withAttachments(Utils.getSignalServiceAttachments(attachments));
         }
@@ -759,8 +855,17 @@ public class Manager implements Signal {
 
     private void sendSyncMessage(SignalServiceSyncMessage message)
             throws IOException, UntrustedIdentityException {
-        SignalServiceMessageSender messageSender = new SignalServiceMessageSender(BaseConfig.serviceConfiguration, username, account.getPassword(),
-                account.getDeviceId(), account.getSignalProtocolStore(), BaseConfig.USER_AGENT, account.isMultiDevice(), Optional.fromNullable(messagePipe), Optional.fromNullable(unidentifiedMessagePipe), Optional.<SignalServiceMessageSender.EventListener>absent());
+        SignalServiceMessageSender messageSender = new SignalServiceMessageSender(BaseConfig.serviceConfiguration,
+                                                                                  username,
+                                                                                  account.getPassword(),
+                                                                                  account.getDeviceId(),
+                                                                                  account.getSignalProtocolStore(),
+                                                                                  BaseConfig.USER_AGENT,
+                                                                                  account.isMultiDevice(),
+                                                                                  Optional.fromNullable(messagePipe),
+                                                                                  Optional.fromNullable(
+                                                                                          unidentifiedMessagePipe),
+                                                                                  Optional.<SignalServiceMessageSender.EventListener>absent());
         try {
             messageSender.sendMessage(message, getAccessForSync());
         } catch (UntrustedIdentityException e) {
@@ -773,7 +878,7 @@ public class Manager implements Signal {
     /**
      * This method throws an EncapsulatedExceptions exception instead of returning a list of SendMessageResult.
      */
-    private void sendMessageLegacy(SignalServiceDataMessage.Builder messageBuilder, Collection<String> recipients)
+    public void sendMessageLegacy(SignalServiceDataMessage.Builder messageBuilder, Collection<String> recipients)
             throws EncapsulatedExceptions, IOException {
         List<SendMessageResult> results = sendMessage(messageBuilder, recipients);
 
@@ -789,9 +894,11 @@ public class Manager implements Signal {
                 networkExceptions.add(new NetworkFailureException(result.getAddress()
                                                                         .getNumber(), null));
             } else if (result.getIdentityFailure() != null) {
-                untrustedIdentities.add(new UntrustedIdentityException("Untrusted", result.getAddress()
-                                                                                          .getNumber(), result.getIdentityFailure()
-                                                                                                              .getIdentityKey()));
+                untrustedIdentities.add(new UntrustedIdentityException("Untrusted",
+                                                                       result.getAddress()
+                                                                             .getNumber(),
+                                                                       result.getIdentityFailure()
+                                                                             .getIdentityKey()));
             }
         }
         if (!untrustedIdentities.isEmpty() || !unregisteredUsers.isEmpty() || !networkExceptions.isEmpty()) {
@@ -810,14 +917,25 @@ public class Manager implements Signal {
 
         SignalServiceDataMessage message = null;
         try {
-            SignalServiceMessageSender messageSender = new SignalServiceMessageSender(BaseConfig.serviceConfiguration, username, account.getPassword(),
-                    account.getDeviceId(), account.getSignalProtocolStore(), BaseConfig.USER_AGENT, account.isMultiDevice(), Optional.fromNullable(messagePipe), Optional.fromNullable(unidentifiedMessagePipe), Optional.<SignalServiceMessageSender.EventListener>absent());
+            SignalServiceMessageSender messageSender = new SignalServiceMessageSender(BaseConfig.serviceConfiguration,
+                                                                                      username,
+                                                                                      account.getPassword(),
+                                                                                      account.getDeviceId(),
+                                                                                      account.getSignalProtocolStore(),
+                                                                                      BaseConfig.USER_AGENT,
+                                                                                      account.isMultiDevice(),
+                                                                                      Optional.fromNullable(messagePipe),
+                                                                                      Optional.fromNullable(
+                                                                                              unidentifiedMessagePipe),
+                                                                                      Optional.<SignalServiceMessageSender.EventListener>absent());
 
             message = messageBuilder.build();
             if (message.getGroupInfo()
                        .isPresent()) {
                 try {
-                    List<SendMessageResult> result = messageSender.sendMessage(new ArrayList<>(recipientsTS), getAccessFor(recipientsTS), message);
+                    List<SendMessageResult> result = messageSender.sendMessage(new ArrayList<>(recipientsTS),
+                                                                               getAccessFor(recipientsTS),
+                                                                               message);
                     for (SendMessageResult r : result) {
                         if (r.getIdentityFailure() != null) {
                             account.getSignalProtocolStore()
@@ -866,7 +984,9 @@ public class Manager implements Signal {
     }
 
     private SignalServiceContent decryptMessage(SignalServiceEnvelope envelope) throws InvalidMetadataMessageException, ProtocolInvalidMessageException, ProtocolDuplicateMessageException, ProtocolLegacyMessageException, ProtocolInvalidKeyIdException, InvalidMetadataVersionException, ProtocolInvalidVersionException, ProtocolNoSessionException, ProtocolInvalidKeyException, ProtocolUntrustedIdentityException, SelfSendException {
-        SignalServiceCipher cipher = new SignalServiceCipher(new SignalServiceAddress(username), account.getSignalProtocolStore(), Utils.getCertificateValidator());
+        SignalServiceCipher cipher = new SignalServiceCipher(new SignalServiceAddress(username),
+                                                             account.getSignalProtocolStore(),
+                                                             Utils.getCertificateValidator());
         try {
             return cipher.decrypt(envelope);
         } catch (ProtocolUntrustedIdentityException e) {
@@ -1005,8 +1125,8 @@ public class Manager implements Signal {
                    .isPresent() && message.getProfileKey()
                                           .get().length == 32) {
             if (source.equals(username)) {
-                this.account.setProfileKey(message.getProfileKey()
-                                                  .get());
+                account.setProfileKey(message.getProfileKey()
+                                             .get());
             }
             ContactInfo contact = account.getContactStore()
                                          .getContact(source);
@@ -1020,16 +1140,16 @@ public class Manager implements Signal {
     }
 
     private void retryFailedReceivedMessages(ReceiveMessageHandler handler, boolean ignoreAttachments) {
-        final File cachePath = new File(getMessageCachePath());
+        File cachePath = new File(getMessageCachePath());
         if (!cachePath.exists()) {
             return;
         }
-        for (final File dir : Objects.requireNonNull(cachePath.listFiles())) {
+        for (File dir : Objects.requireNonNull(cachePath.listFiles())) {
             if (!dir.isDirectory()) {
                 continue;
             }
 
-            for (final File fileEntry : Objects.requireNonNull(dir.listFiles())) {
+            for (File fileEntry : Objects.requireNonNull(dir.listFiles())) {
                 if (!fileEntry.isFile()) {
                     continue;
                 }
@@ -1071,7 +1191,14 @@ public class Manager implements Signal {
                                 boolean ignoreAttachments,
                                 ReceiveMessageHandler handler) throws IOException {
         retryFailedReceivedMessages(handler, ignoreAttachments);
-        final SignalServiceMessageReceiver messageReceiver = new SignalServiceMessageReceiver(BaseConfig.serviceConfiguration, username, account.getPassword(), account.getDeviceId(), account.getSignalingKey(), BaseConfig.USER_AGENT, null, timer);
+        SignalServiceMessageReceiver messageReceiver = new SignalServiceMessageReceiver(BaseConfig.serviceConfiguration,
+                                                                                        username,
+                                                                                        account.getPassword(),
+                                                                                        account.getDeviceId(),
+                                                                                        account.getSignalingKey(),
+                                                                                        BaseConfig.USER_AGENT,
+                                                                                        null,
+                                                                                        timer);
 
         try {
             if (messagePipe == null) {
@@ -1082,14 +1209,16 @@ public class Manager implements Signal {
                 SignalServiceEnvelope envelope;
                 SignalServiceContent content = null;
                 Exception exception = null;
-                final long now = new Date().getTime();
+                long now = new Date().getTime();
                 try {
                     envelope = messagePipe.read(timeout, unit, new SignalServiceMessagePipe.MessagePipeCallback() {
                         @Override
                         public void onMessage(SignalServiceEnvelope envelope) {
                             // store message on disk, before acknowledging receipt to the server
                             try {
-                                File cacheFile = getMessageCacheFile(envelope.getSource(), now, envelope.getTimestamp());
+                                File cacheFile = getMessageCacheFile(envelope.getSource(),
+                                                                     now,
+                                                                     envelope.getTimestamp());
                                 Utils.storeEnvelope(envelope, cacheFile);
                             } catch (IOException e) {
                                 System.err.println("Failed to store encrypted message in disk cache, ignoring: " + e.getMessage());
@@ -1097,8 +1226,9 @@ public class Manager implements Signal {
                         }
                     });
                 } catch (TimeoutException e) {
-                    if (returnOnTimeout)
+                    if (returnOnTimeout) {
                         return;
+                    }
                     continue;
                 } catch (InvalidVersionException e) {
                     System.err.println("Ignoring error: " + e.getMessage());
@@ -1154,10 +1284,14 @@ public class Manager implements Signal {
                     SignalServiceDataMessage message = syncMessage.getSent()
                                                                   .get()
                                                                   .getMessage();
-                    handleSignalServiceDataMessage(message, true, envelope.getSource(), syncMessage.getSent()
-                                                                                                   .get()
-                                                                                                   .getDestination()
-                                                                                                   .get(), ignoreAttachments);
+                    handleSignalServiceDataMessage(message,
+                                                   true,
+                                                   envelope.getSource(),
+                                                   syncMessage.getSent()
+                                                              .get()
+                                                              .getDestination()
+                                                              .get(),
+                                                   ignoreAttachments);
                 }
                 if (syncMessage.getRequest()
                                .isPresent()) {
@@ -1186,7 +1320,8 @@ public class Manager implements Signal {
                         tmpFile = IOUtils.createTempFile();
                         try (InputStream attachmentAsStream = retrieveAttachmentAsStream(syncMessage.getGroups()
                                                                                                     .get()
-                                                                                                    .asPointer(), tmpFile)) {
+                                                                                                    .asPointer(),
+                                                                                         tmpFile)) {
                             DeviceGroupsInputStream s = new DeviceGroupsInputStream(attachmentAsStream);
                             DeviceGroup g;
                             while ((g = s.read()) != null) {
@@ -1238,10 +1373,11 @@ public class Manager implements Signal {
                     File tmpFile = null;
                     try {
                         tmpFile = IOUtils.createTempFile();
-                        final ContactsMessage contactsMessage = syncMessage.getContacts()
-                                                                           .get();
+                        ContactsMessage contactsMessage = syncMessage.getContacts()
+                                                                     .get();
                         try (InputStream attachmentAsStream = retrieveAttachmentAsStream(contactsMessage.getContactsStream()
-                                                                                                        .asPointer(), tmpFile)) {
+                                                                                                        .asPointer(),
+                                                                                         tmpFile)) {
                             DeviceContactsInputStream s = new DeviceContactsInputStream(attachmentAsStream);
                             if (contactsMessage.isComplete()) {
                                 account.getContactStore()
@@ -1278,10 +1414,12 @@ public class Manager implements Signal {
                                 }
                                 if (c.getVerified()
                                      .isPresent()) {
-                                    final VerifiedMessage verifiedMessage = c.getVerified()
-                                                                             .get();
+                                    VerifiedMessage verifiedMessage = c.getVerified()
+                                                                       .get();
                                     account.getSignalProtocolStore()
-                                           .saveIdentity(verifiedMessage.getDestination(), verifiedMessage.getIdentityKey(), TrustLevel.fromVerifiedState(verifiedMessage.getVerified()));
+                                           .saveIdentity(verifiedMessage.getDestination(),
+                                                         verifiedMessage.getIdentityKey(),
+                                                         TrustLevel.fromVerifiedState(verifiedMessage.getVerified()));
                                 }
                                 if (c.getExpirationTimer()
                                      .isPresent()) {
@@ -1319,10 +1457,12 @@ public class Manager implements Signal {
                 }
                 if (syncMessage.getVerified()
                                .isPresent()) {
-                    final VerifiedMessage verifiedMessage = syncMessage.getVerified()
-                                                                       .get();
+                    VerifiedMessage verifiedMessage = syncMessage.getVerified()
+                                                                 .get();
                     account.getSignalProtocolStore()
-                           .saveIdentity(verifiedMessage.getDestination(), verifiedMessage.getIdentityKey(), TrustLevel.fromVerifiedState(verifiedMessage.getVerified()));
+                           .saveIdentity(verifiedMessage.getDestination(),
+                                         verifiedMessage.getIdentityKey(),
+                                         TrustLevel.fromVerifiedState(verifiedMessage.getVerified()));
                 }
                 if (syncMessage.getConfiguration()
                                .isPresent()) {
@@ -1390,7 +1530,14 @@ public class Manager implements Signal {
             }
         }
 
-        final SignalServiceMessageReceiver messageReceiver = new SignalServiceMessageReceiver(BaseConfig.serviceConfiguration, username, account.getPassword(), account.getDeviceId(), account.getSignalingKey(), BaseConfig.USER_AGENT, null, timer);
+        SignalServiceMessageReceiver messageReceiver = new SignalServiceMessageReceiver(BaseConfig.serviceConfiguration,
+                                                                                        username,
+                                                                                        account.getPassword(),
+                                                                                        account.getDeviceId(),
+                                                                                        account.getSignalingKey(),
+                                                                                        BaseConfig.USER_AGENT,
+                                                                                        null,
+                                                                                        timer);
 
         File tmpFile = IOUtils.createTempFile();
         try (InputStream input = messageReceiver.retrieveAttachment(pointer, tmpFile, BaseConfig.MAX_ATTACHMENT_SIZE)) {
@@ -1417,7 +1564,14 @@ public class Manager implements Signal {
 
     private InputStream retrieveAttachmentAsStream(SignalServiceAttachmentPointer pointer,
                                                    File tmpFile) throws IOException, InvalidMessageException {
-        SignalServiceMessageReceiver messageReceiver = new SignalServiceMessageReceiver(BaseConfig.serviceConfiguration, username, account.getPassword(), account.getDeviceId(), account.getSignalingKey(), BaseConfig.USER_AGENT, null, timer);
+        SignalServiceMessageReceiver messageReceiver = new SignalServiceMessageReceiver(BaseConfig.serviceConfiguration,
+                                                                                        username,
+                                                                                        account.getPassword(),
+                                                                                        account.getDeviceId(),
+                                                                                        account.getSignalingKey(),
+                                                                                        BaseConfig.USER_AGENT,
+                                                                                        null,
+                                                                                        timer);
         return messageReceiver.retrieveAttachment(pointer, tmpFile, BaseConfig.MAX_ATTACHMENT_SIZE);
     }
 
@@ -1436,10 +1590,14 @@ public class Manager implements Signal {
                                                .getGroups()) {
                     ThreadInfo info = account.getThreadStore()
                                              .getThread(Base64.encodeBytes(record.groupId));
-                    out.write(new DeviceGroup(record.groupId, Optional.fromNullable(record.name),
-                            new ArrayList<>(record.members), createGroupAvatarAttachment(record.groupId),
-                            record.active, Optional.fromNullable(info != null ? info.messageExpirationTime : null),
-                            Optional.fromNullable(record.color), false));
+                    out.write(new DeviceGroup(record.groupId,
+                                              Optional.fromNullable(record.name),
+                                              new ArrayList<>(record.members),
+                                              createGroupAvatarAttachment(record.groupId),
+                                              record.active,
+                                              Optional.fromNullable(info != null ? info.messageExpirationTime : null),
+                                              Optional.fromNullable(record.color),
+                                              false));
                 }
             }
 
@@ -1447,7 +1605,8 @@ public class Manager implements Signal {
                 try (FileInputStream groupsFileStream = new FileInputStream(groupsFile)) {
                     SignalServiceAttachmentStream attachmentStream = SignalServiceAttachment.newStreamBuilder()
                                                                                             .withStream(groupsFileStream)
-                                                                                            .withContentType("application/octet-stream")
+                                                                                            .withContentType(
+                                                                                                    "application/octet-stream")
                                                                                             .withLength(groupsFile.length())
                                                                                             .build();
 
@@ -1483,35 +1642,48 @@ public class Manager implements Signal {
                             }
                         }
                         if (currentIdentity != null) {
-                            verifiedMessage = new VerifiedMessage(record.number, currentIdentity.getIdentityKey(), currentIdentity.getTrustLevel()
-                                                                                                                                  .toVerifiedState(), currentIdentity.getDateAdded()
-                                                                                                                                                                     .getTime());
+                            verifiedMessage = new VerifiedMessage(record.number,
+                                                                  currentIdentity.getIdentityKey(),
+                                                                  currentIdentity.getTrustLevel()
+                                                                                 .toVerifiedState(),
+                                                                  currentIdentity.getDateAdded()
+                                                                                 .getTime());
                         }
                     }
 
                     byte[] profileKey = record.profileKey == null ? null : Base64.decode(record.profileKey);
                     // TODO store list of blocked numbers
                     boolean blocked = false;
-                    out.write(new DeviceContact(record.number, Optional.fromNullable(record.name),
-                            createContactAvatarAttachment(record.number), Optional.fromNullable(record.color),
-                            Optional.fromNullable(verifiedMessage), Optional.fromNullable(profileKey), blocked, Optional.fromNullable(info != null ? info.messageExpirationTime : null)));
+                    out.write(new DeviceContact(record.number,
+                                                Optional.fromNullable(record.name),
+                                                createContactAvatarAttachment(record.number),
+                                                Optional.fromNullable(record.color),
+                                                Optional.fromNullable(verifiedMessage),
+                                                Optional.fromNullable(profileKey),
+                                                blocked,
+                                                Optional.fromNullable(info != null ? info.messageExpirationTime : null)));
                 }
 
                 if (account.getProfileKey() != null) {
                     // Send our own profile key as well
                     out.write(new DeviceContact(account.getUsername(),
-                            Optional.<String>absent(), Optional.<SignalServiceAttachmentStream>absent(),
-                            Optional.<String>absent(), Optional.<VerifiedMessage>absent(),
-                            Optional.of(account.getProfileKey()),
-                            false, Optional.<Integer>absent()));
+                                                Optional.<String>absent(),
+                                                Optional.<SignalServiceAttachmentStream>absent(),
+                                                Optional.<String>absent(),
+                                                Optional.<VerifiedMessage>absent(),
+                                                Optional.of(account.getProfileKey()),
+                                                false,
+                                                Optional.<Integer>absent()));
                 }
             }
 
             if (contactsFile.exists() && contactsFile.length() > 0) {
                 try (FileInputStream contactsFileStream = new FileInputStream(contactsFile)) {
                     SignalServiceAttachmentStream attachmentStream = SignalServiceAttachment.newStreamBuilder()
-                                                                                            .withStream(contactsFileStream)
-                                                                                            .withContentType("application/octet-stream")
+                                                                                            .withStream(
+                                                                                                    contactsFileStream)
+                                                                                            .withContentType(
+                                                                                                    "application/octet-stream")
                                                                                             .withLength(contactsFile.length())
                                                                                             .build();
 
@@ -1530,7 +1702,10 @@ public class Manager implements Signal {
     private void sendVerifiedMessage(String destination,
                                      IdentityKey identityKey,
                                      TrustLevel trustLevel) throws IOException, UntrustedIdentityException {
-        VerifiedMessage verifiedMessage = new VerifiedMessage(destination, identityKey, trustLevel.toVerifiedState(), System.currentTimeMillis());
+        VerifiedMessage verifiedMessage = new VerifiedMessage(destination,
+                                                              identityKey,
+                                                              trustLevel.toVerifiedState(),
+                                                              System.currentTimeMillis());
         sendSyncMessage(SignalServiceSyncMessage.forVerified(verifiedMessage));
     }
 
