@@ -60,7 +60,7 @@ public class Main {
         System.exit(res);
     }
 
-    public static void installSecurityProviderWorkaround() {
+    private static void installSecurityProviderWorkaround() {
         // Register our own security provider
         Security.insertProviderAt(new SecurityProvider(), 1);
         Security.addProvider(new BouncyCastleProvider());
